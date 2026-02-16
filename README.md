@@ -23,27 +23,25 @@ A Bash script designed to automate routine system maintenance and cleanup tasks 
 
 1.  **Download the script:**
     You can clone the repository or download the script directly:
-    ```bash
+    ```shell
     curl -O https://raw.githubusercontent.com/jakubd-m/arch-maintenance-tool/main/arch-maintenance-tool.sh
     ```
 
 2.  **Make it executable:**
-    ```bash
+    ```shell
     chmod +x arch-maintenance-tool.sh
     ```
 
 3.  **Run it:**
-    ```bash
+    ```shell
     sudo ./arch-maintenance-tool.sh
     ```
-
-    Or create an alias and run the script easily from anywhere:
-    ```bash
-    alias clean='sudo /path/to/arch-maintenance-tool.sh'
+    Or add it to your Bash or Zsh shell as, for instance, "clean":
+    ```shell
+    echo "alias clean='sudo $PWD/arch-maintenance-tool.sh'" >> ~/.bashrc && source ~/.bashrc
     ```
-    Then reload your shell and simply run:
-    ```bash
-    clean
+    ```shell
+    echo "alias clean='sudo $PWD/arch-maintenance-tool.sh'" >> ~/.zshrc && source ~/.zshrc
     ```
     
 ## Disclaimer
