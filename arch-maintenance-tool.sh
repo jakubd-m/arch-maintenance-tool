@@ -6,19 +6,27 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# check for root privileges
 if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}This script must be run with sudo.${NC}"
    exit 1
 fi
 
-# detect the real user
+if [ -f /var/lib/pacman/db.lck ]; then
+    echo -e "${RED}Pacman is currently running (db.lck exists). Please wait for it to finish.${NC}"
+    exit 1
+fi
+
 if [ -n "$SUDO_USER" ]; then
     REAL_USER=$SUDO_USER
     USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 else
-    echo -e "${RED}Please run this script via sudo (e.g., sudo ./script.sh)${NC}"
+    echo -e "${RED}Please run this script via sudo from a user account.${NC}"
     exit 1
+fi
+
+if ! command -v paccache &> /dev/null; then
+    echo -e "${YELLOW}Installing pacman-contrib for cache analysis...${NC}"
+    pacman -S --noconfirm pacman-contrib &>/dev/null
 fi
 
 get_size() {
@@ -30,20 +38,22 @@ format_size() {
 }
 
 clear
-echo -e "${BLUE}--- ARCH LINUX CLEANUP: ANALYSIS PHASE ---${NC}"
-
-# --- PHASE 1: GATHERING DATA ---
 
 echo "Analyzing system..."
 
-# Pacman
-SIZE_PAC_RAW=$(get_size /var/cache/pacman/pkg/)
-SIZE_PAC_HUMAN=$(format_size $SIZE_PAC_RAW)
+PAC_SAVINGS_RAW=$(paccache -rk3 -d 2>/dev/null | grep "saved" | awk '{print $(NF-1) $(NF)}')
+if [[ -z "$PAC_SAVINGS_RAW" ]]; then
+    PAC_SAVINGS_DISPLAY="0"
+else
+    PAC_SAVINGS_DISPLAY="$PAC_SAVINGS_RAW"
+fi
 
-# AUR
+SIZE_PAC_RAW=$(get_size /var/cache/pacman/pkg/)
+
 AUR_DIR=""
 AUR_HELPER="none"
 SIZE_AUR_RAW=0
+
 if [ -d "$USER_HOME/.cache/yay" ]; then
     AUR_DIR="$USER_HOME/.cache/yay"
     AUR_HELPER="yay"
@@ -55,111 +65,95 @@ fi
 if [ "$AUR_HELPER" != "none" ]; then
     SIZE_AUR_RAW=$(get_size "$AUR_DIR")
 fi
-SIZE_AUR_HUMAN=$(format_size $SIZE_AUR_RAW)
+AUR_SAVINGS=$(format_size $SIZE_AUR_RAW)
 
-# orphans
-ORPHANS_LIST=$(pacman -Qtdq)
-ORPHANS_COUNT=0
-if [[ -n "$ORPHANS_LIST" ]]; then
-    ORPHANS_COUNT=$(echo "$ORPHANS_LIST" | wc -w)
-fi
+TARGET_LOGS=51200
+SIZE_LOGS_RAW=$(get_size /var/log/journal)
+DIFF_LOGS=$((SIZE_LOGS_RAW - TARGET_LOGS))
 
-# logs
-LOGS_SIZE=$(journalctl --disk-usage | awk '{print $NF}')
+if [ $DIFF_LOGS -lt 0 ]; then DIFF_LOGS=0; fi
+LOGS_SAVINGS=$(format_size $DIFF_LOGS)
 
-# thumbnails cache
 SIZE_CACHE_RAW=$(get_size "$USER_HOME/.cache/thumbnails")
-SIZE_CACHE_HUMAN=$(format_size $SIZE_CACHE_RAW)
+CACHE_SAVINGS=$(format_size $SIZE_CACHE_RAW)
 
-
-# --- PHASE 2: REPORT AND CONFIRMATION ---
+mapfile -t ORPHANS_LIST < <(pacman -Qtdq)
+ORPHANS_COUNT=${#ORPHANS_LIST[@]}
 
 echo ""
-echo "========================================"
-echo -e "      ${YELLOW}PROPOSED CLEANUP${NC}"
-echo "========================================"
-echo -e "1. Pacman cache:    ${RED}$SIZE_PAC_HUMAN${NC} (only 3 latest versions kept)"
-echo -e "2. AUR cache:       ${RED}$SIZE_AUR_HUMAN${NC} (removes $AUR_HELPER build sources)"
-echo -e "3. System logs:     ${RED}$LOGS_SIZE${NC} (will be vacuumed to 50MB)"
-echo -e "4. Thumbnails:      ${RED}$SIZE_CACHE_HUMAN${NC} (will be fully removed)"
-echo "----------------------------------------"
+echo -e "${YELLOW}PROPOSED CLEANUP:${NC}"
+echo -e "1. Pacman cache:    ${RED}$PAC_SAVINGS_DISPLAY${NC} (keep 3 versions)"
+echo -e "2. AUR cache:       ${RED}$AUR_SAVINGS${NC} ($AUR_HELPER)"
+echo -e "3. System logs:     ${RED}$LOGS_SAVINGS${NC} (reduce to 50MB)"
+echo -e "4. Thumbnails:      ${RED}$CACHE_SAVINGS${NC} (clear all)"
 echo -e "5. Orphan Packages: ${RED}$ORPHANS_COUNT${NC}"
 
 if [[ $ORPHANS_COUNT -gt 0 ]]; then
-    echo -e "${YELLOW}Verify if these are safe to remove:${NC}"
-    echo -e "$ORPHANS_LIST"
+    echo -e "${YELLOW}Orphans to remove:${NC}"
+    echo "${ORPHANS_LIST[*]}"
 fi
-echo "========================================"
 echo ""
 
 read -p "Do you want to proceed with cleanup? [y/N]: " decision
 case "$decision" in
     [yY])
         echo ""
-        echo -e "${GREEN}Starting cleanup...${NC}"
+        echo -e "Starting cleanup..."
         ;;
     *)
         echo ""
-        echo "Aborted. No changes were made."
+        echo "Aborted."
         exit 0
         ;;
 esac
 
-
-# --- PHASE 3: EXECUTION ---
-
-# Pacman
-if ! command -v paccache &> /dev/null; then
-    echo "Installing pacman-contrib..."
-    pacman -S --noconfirm pacman-contrib &>/dev/null
-fi
 paccache -r &>/dev/null
 paccache -ruk0 &>/dev/null
 
-# AUR
 if [ "$AUR_HELPER" == "yay" ]; then
     sudo -u "$REAL_USER" yay -Sc --noconfirm &>/dev/null
 elif [ "$AUR_HELPER" == "paru" ]; then
     sudo -u "$REAL_USER" paru -Sc --noconfirm &>/dev/null
 fi
 
-# orphans
-if [[ -n "$ORPHANS_LIST" ]]; then
-    pacman -Rns $ORPHANS_LIST --noconfirm &>/dev/null
+if [[ $ORPHANS_COUNT -gt 0 ]]; then
+    pacman -Rns "${ORPHANS_LIST[@]}" --noconfirm &>/dev/null
 fi
 
-# logs
 journalctl --vacuum-size=50M &>/dev/null
 
-# thumbnails cache
-rm -rf "$USER_HOME/.cache/thumbnails/*" &>/dev/null
+rm -rf "$USER_HOME/.cache/thumbnails"/* &>/dev/null
 
-
-# --- PHASE 4: FINAL REPORT ---
-# Calculate sizes after cleanup
 SIZE_PAC_AFTER=$(get_size /var/cache/pacman/pkg/)
+SIZE_LOGS_AFTER=$(get_size /var/log/journal)
+SIZE_CACHE_AFTER=$(get_size "$USER_HOME/.cache/thumbnails")
+
 if [ "$AUR_HELPER" != "none" ]; then
     SIZE_AUR_AFTER=$(get_size "$AUR_DIR")
 else
     SIZE_AUR_AFTER=0
 fi
-SIZE_CACHE_AFTER=$(get_size "$USER_HOME/.cache/thumbnails")
 
-# Calculate freed space
 FREED_PAC=$((SIZE_PAC_RAW - SIZE_PAC_AFTER))
 FREED_AUR=$((SIZE_AUR_RAW - SIZE_AUR_AFTER))
+FREED_LOGS=$((SIZE_LOGS_RAW - SIZE_LOGS_AFTER))
 FREED_CACHE=$((SIZE_CACHE_RAW - SIZE_CACHE_AFTER))
-TOTAL_FREED=$((FREED_PAC + FREED_AUR + FREED_CACHE))
+
+if [ $FREED_PAC -lt 0 ]; then FREED_PAC=0; fi
+if [ $FREED_AUR -lt 0 ]; then FREED_AUR=0; fi
+if [ $FREED_LOGS -lt 0 ]; then FREED_LOGS=0; fi
+if [ $FREED_CACHE -lt 0 ]; then FREED_CACHE=0; fi
+
+TOTAL_FREED=$((FREED_PAC + FREED_AUR + FREED_LOGS + FREED_CACHE))
 
 echo ""
-echo "========================================"
-echo -e "          ${BLUE}SUCCESS${NC}"
-echo "========================================"
+echo -e "${GREEN}SUCCESS${NC}"
 echo -e "Total space freed: ${GREEN}$(format_size $TOTAL_FREED)${NC}"
-echo "System logs vacuumed."
+echo -e "1. Pacman cache:    ${RED}$(format_size $FREED_PAC)${NC}"
+echo -e "2. AUR cache:       ${RED}$(format_size $FREED_AUR)${NC}"
+echo -e "3. System logs:     ${RED}$(format_size $FREED_LOGS)${NC}"
+echo -e "4. Thumbnails:      ${RED}$(format_size $FREED_CACHE)${NC}"
 if [[ $ORPHANS_COUNT -gt 0 ]]; then
-    echo "Removed $ORPHANS_COUNT orphan packages."
+    echo "5. Removed $ORPHANS_COUNT orphan packages."
 fi
-echo "========================================"
-echo "Press Enter to exit..."
-read
+echo ""

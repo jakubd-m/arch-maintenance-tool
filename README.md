@@ -19,18 +19,33 @@ A Bash script designed to automate routine system maintenance and cleanup tasks 
 * **System logs**: Vacuums `systemd` journal logs to a limit of 50MB.
 * **Thumbnails**: Clears the user's thumbnail cache (`~/.cache/thumbnails`).
 
-## Instruction
+## Usage
 
-1.  **Download and make the script executable:**
+1.  **Download the script:**
+    You can clone the repository or download the script directly:
+    ```bash
+    curl -O https://raw.githubusercontent.com/jakubd-m/arch-maintenance-tool/main/arch-maintenance-tool.sh
+    ```
+
+2.  **Make it executable:**
     ```bash
     chmod +x arch-maintenance-tool.sh
     ```
 
-2.  **Run with sudo:**
+3.  **Run it:**
     ```bash
     sudo ./arch-maintenance-tool.sh
     ```
 
+    Or create an alias and run the script easily from anywhere:
+    ```bash
+    alias clean='sudo /path/to/arch-maintenance-tool.sh'
+    ```
+    Then reload your shell and simply run:
+    ```bash
+    clean
+    ```
+    
 ## Disclaimer
 
 This script performs file deletion operations. While it includes safety prompts and utilizes standard Arch Linux tools (`paccache`, `pacman`), **always review the proposed changes** (especially the list of orphan packages) before confirming the cleanup.
